@@ -15,18 +15,18 @@ use watchbeat::scheduler::SchedulerManager;
 async fn main() {
     dotenvy::dotenv().ok();
 
-    // ───── rustls CryptoProvider ─────
+    // âââââ rustls CryptoProvider âââââ
     // `reqwest` pulls in `aws-lc-rs` while we depend on `ring`; without an explicit
     // process-level default, `rustls::ClientConfig::builder()` panics. Install `ring`.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let config = Config::load();
 
-    // ───── DNS resolver ─────
+    // âââââ DNS resolver âââââ
     // Must run before the first check: the resolver is built once, lazily.
     watchbeat::dns::init(config.dns_upstreams.clone());
 
-    // ───── Tracing ─────
+    // âââââ Tracing âââââ
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
 
@@ -48,17 +48,17 @@ async fn main() {
             .init();
     }
 
-    tracing::info!("🚀 WatchBeat starting...");
+    tracing::info!("ð WatchBeat starting...");
 
-    // ───── Connectivity verification ─────
-    tracing::info!("🔌 Checking connectivity...");
+    // âââââ Connectivity verification âââââ
+    tracing::info!("ð Checking connectivity...");
     let check_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .unwrap();
     match check_client.get("https://1.1.1.1").send().await {
-        Ok(_) => tracing::info!("✅ Internet connectivity OK"),
-        Err(e) => tracing::warn!("⚠️  Internet connectivity check failed: {} (non-fatal)", e),
+        Ok(_) => tracing::info!("â Internet connectivity OK"),
+        Err(e) => tracing::warn!("â ï¸  Internet connectivity check failed: {} (non-fatal)", e),
     }
     match check_client
         .get(format!(
@@ -68,51 +68,54 @@ async fn main() {
         .send()
         .await
     {
-        Ok(_) => tracing::info!("✅ OIDC provider reachable"),
-        Err(e) => tracing::warn!("⚠️  OIDC provider not reachable: {} (will retry)", e),
+        Ok(_) => tracing::info!("â OIDC provider reachable"),
+        Err(e) => tracing::warn!("â ï¸  OIDC provider not reachable: {} (will retry)", e),
     }
 
-    // ───── Data directory ─────
+    // âââââ Data directory âââââ
     if let Err(e) = tokio::fs::create_dir_all(&config.data_dir).await {
         tracing::warn!("Could not create data dir: {}", e);
     }
 
-    // ───── Database ─────
+    // âââââ Database âââââ
     let db = match Database::open(&config.database_url).await {
         Ok(db) => {
-            tracing::info!("📦 Database opened: {}", config.database_url.display());
+            tracing::info!("ð¦ Database opened: {}", config.database_url.display());
             db
         }
         Err(e) => {
-            tracing::error!("❌ Failed to open database: {}", e);
+            tracing::error!("â Failed to open database: {}", e);
             std::process::exit(1);
         }
     };
 
-    // ───── OIDC (mandatory) ─────
+    // âââââ OIDC (mandatory) âââââ
     let oidc_metadata = match auth::discover_oidc(&config).await {
         Ok(m) => {
-            tracing::info!("✅ OIDC discovery: {}", m.issuer);
+            tracing::info!("â OIDC discovery: {}", m.issuer);
             m
         }
         Err(e) => {
-            tracing::error!("❌ OIDC discovery failed: {}", e);
+            tracing::error!("â OIDC discovery failed: {}", e);
             std::process::exit(1);
         }
     };
 
-    // ───── JWKS (como populates) ─────
-    let jwt_validator = JwtValidator::new(&config.oidc_issuer_url, &config.oidc_client_id);
+    // âââââ JWKS (como populates) âââââ
+    // Validate against the issuer exactly as published in the discovery
+    // document: Authentik's issuer ends with a slash, and the `iss` claim of
+    // its ID tokens matches that value.
+    let jwt_validator = JwtValidator::new(&oidc_metadata.issuer, &config.oidc_client_id);
     if let Err(e) = jwt_validator.fetch_jwks(&config.oidc_issuer_url).await {
-        tracing::error!("❌ JWKS fetch failed: {}. OIDC will not work.", e);
+        tracing::error!("â JWKS fetch failed: {}. OIDC will not work.", e);
         std::process::exit(1);
     }
     let jwt_validator = Arc::new(jwt_validator);
 
-    // ───── App State ─────
+    // âââââ App State âââââ
     let (event_tx, _) = tokio::sync::broadcast::channel(auth::SSE_CHANNEL_CAPACITY);
 
-    // ───── Network health canary ─────
+    // âââââ Network health canary âââââ
     // Publishes the health of our own egress; the scheduler reads it (never
     // awaits) to attribute every failure to the target or to our connectivity.
     // The period comes from the `canary_interval_secs` setting (default 30s).
@@ -143,7 +146,7 @@ async fn main() {
         netcheck: netcheck_handle,
     });
 
-    // ───── Daily Cleanup Loop ─────
+    // âââââ Daily Cleanup Loop âââââ
     let db_for_cleanup = db.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(86400));
@@ -164,7 +167,7 @@ async fn main() {
         }
     });
 
-    // ───── Router (como populates) ─────
+    // âââââ Router (como populates) âââââ
     let state_for_middleware = app_state.clone();
     let app = routes::api_routes()
         .layer(CorsLayer::permissive())
@@ -189,7 +192,7 @@ async fn main() {
         format!("{}:{}", config.host, config.port)
     };
 
-    tracing::info!("🌐 WatchBeat en http://{}", addr);
+    tracing::info!("ð WatchBeat en http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
@@ -215,7 +218,7 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
     tokio::select! {
-        _ = ctrl_c => { tracing::info!("🛑 SIGINT received, shutting down..."); }
-        _ = terminate => { tracing::info!("🛑 SIGTERM received, shutting down..."); }
+        _ = ctrl_c => { tracing::info!("ð SIGINT received, shutting down..."); }
+        _ = terminate => { tracing::info!("ð SIGTERM received, shutting down..."); }
     }
 }
