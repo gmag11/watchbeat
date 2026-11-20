@@ -12,7 +12,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::config::Config;
 use crate::scheduler::SchedulerManager;
 
-// ───── OIDC Metadata ─────
+// âââââ OIDC Metadata âââââ
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct OidcMetadata {
@@ -24,7 +24,7 @@ pub struct OidcMetadata {
     pub scopes_supported: Option<Vec<String>>,
 }
 
-// ───── JWT Claims (OIDC token claims) ─────
+// âââââ JWT Claims (OIDC token claims) âââââ
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
@@ -34,7 +34,7 @@ pub struct Claims {
     pub preferred_username: Option<String>,
 }
 
-// ───── JWT Validator (exactamente como populates) ─────
+// âââââ JWT Validator (exactamente como populates) âââââ
 
 pub struct JwtValidator {
     jwks: Arc<RwLock<Vec<DecodingKey>>>,
@@ -68,7 +68,19 @@ impl JwtValidator {
     }
 
     pub async fn fetch_jwks(&self, issuer: &str) -> Result<(), String> {
-        let jwks_url = format!("{}/.well-known/jwks.json", issuer.trim_end_matches('/'));
+        // Use the jwks_uri advertised by the provider's discovery document
+        // instead of assuming a fixed path (Authentik uses /jwks/).
+        let discovery_url = format!(
+            "{}/.well-known/openid-configuration",
+            issuer.trim_end_matches('/')
+        );
+        let metadata: OidcMetadata = reqwest::get(&discovery_url)
+            .await
+            .map_err(|e| format!("failed to fetch OIDC discovery: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("failed to parse OIDC discovery: {e}"))?;
+        let jwks_url = metadata.jwks_uri;
         let resp: serde_json::Value = reqwest::get(&jwks_url)
             .await
             .map_err(|e| format!("failed to fetch JWKS: {e}"))?
@@ -137,7 +149,7 @@ impl JwtValidator {
             }
         }
 
-        // All cached keys failed — re-fetch JWKS in case keys were rotated.
+        // All cached keys failed â re-fetch JWKS in case keys were rotated.
         // Skipped when refresh is disabled (offline/test mode).
         if !self.refresh_on_miss {
             return Err("no matching JWK found for token".to_string());
@@ -163,7 +175,7 @@ impl JwtValidator {
     }
 }
 
-// ───── AppState ─────
+// âââââ AppState âââââ
 
 /// SSE event broadcast channel capacity
 pub const SSE_CHANNEL_CAPACITY: usize = 256;
@@ -190,7 +202,7 @@ pub struct SchedulerStatus {
     pub active_tasks: u64,
 }
 
-// ───── Auth Middleware (exactamente como populates) ─────
+// âââââ Auth Middleware (exactamente como populates) âââââ
 
 pub async fn require_auth(mut req: Request, next: Next) -> Result<Response, StatusCode> {
     let path = req.uri().path();
@@ -202,7 +214,7 @@ pub async fn require_auth(mut req: Request, next: Next) -> Result<Response, Stat
         || path.starts_with("/api/heartbeat/")
         || path.starts_with("/api/events")
     {
-        tracing::trace!(path = %path, "public endpoint — skipping auth");
+        tracing::trace!(path = %path, "public endpoint â skipping auth");
         return Ok(next.run(req).await);
     }
     // Non-API routes (frontend assets) pass through
@@ -246,7 +258,7 @@ pub async fn require_auth(mut req: Request, next: Next) -> Result<Response, Stat
     Ok(next.run(req).await)
 }
 
-// ───── Auth Error ─────
+// âââââ Auth Error âââââ
 
 #[derive(Debug)]
 pub enum AuthError {
@@ -265,7 +277,7 @@ impl IntoResponse for AuthError {
     }
 }
 
-// ───── OIDC Discovery ─────
+// âââââ OIDC Discovery âââââ
 
 pub async fn discover_oidc(config: &Config) -> anyhow::Result<OidcMetadata> {
     let issuer = config.oidc_issuer_url.trim_end_matches('/');
